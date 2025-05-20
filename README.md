@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/status-prototype-yellow" alt="Project Status"/>
 </p>
 
-<h1 align="center">🏪 Reposición de Productos a Tiendas (v1.0)</h1>
+<h1 align="center">🏪 Sugerido automatico WHS (v1.0)</h1>
 
 <p align="center">
   Automatiza la asignación de stock a tiendas basado en ventas recientes, prioridad y stock de bodega.<br/>

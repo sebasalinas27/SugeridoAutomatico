@@ -57,3 +57,10 @@ El sistema genera un Excel con 3 hojas:
 ```bash
 pip install streamlit pandas openpyxl xlsxwriter matplotlib seaborn
 streamlit run app.py
+
+### 📥 Archivo de ejemplo
+
+Puedes descargar y usar el siguiente archivo de ejemplo para probar la aplicación:
+
+👉 [archivo_ejemplo.xlsx](archivo_ejemplo.xlsx)
+

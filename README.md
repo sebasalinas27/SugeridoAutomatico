@@ -1,6 +1,15 @@
-# 🏪 Reposición de Productos a Tiendas (v1.0)
+<p align="center">
+  <img src="https://img.shields.io/badge/streamlit-app-red?logo=streamlit" alt="Streamlit Badge"/>
+  <img src="https://img.shields.io/badge/python-3.10+-blue?logo=python" alt="Python Badge"/>
+  <img src="https://img.shields.io/badge/status-prototype-yellow" alt="Project Status"/>
+</p>
 
-Este módulo en Python con Streamlit permite **calcular y asignar stock de reposición** a tiendas en base a las ventas recientes, el stock actual y el stock disponible en bodega. Es especialmente útil para empresas de retail que necesitan definir **reposición semanal o quincenal** de forma automatizada.
+<h1 align="center">🏪 Reposición de Productos a Tiendas (v1.0)</h1>
+
+<p align="center">
+  Automatiza la asignación de stock a tiendas basado en ventas recientes, prioridad y stock de bodega.<br/>
+  Incluye selección de método de asignación, exportación en Excel y visualizaciones clave.
+</p>
 
 ---
 
@@ -57,10 +66,3 @@ El sistema genera un Excel con 3 hojas:
 ```bash
 pip install streamlit pandas openpyxl xlsxwriter matplotlib seaborn
 streamlit run app.py
-
-### 📥 Archivo de ejemplo
-
-Puedes descargar y usar el siguiente archivo de ejemplo para probar la aplicación:
-
-👉 [archivo_ejemplo.xlsx](archivo_ejemplo.xlsx)
-

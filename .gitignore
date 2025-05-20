@@ -1,0 +1,28 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+ENV/
+
+# Archivos de configuración de VSCode o PyCharm
+.vscode/
+.idea/
+
+# Streamlit local cache
+.streamlit/
+
+# Archivos de salida
+*.xlsx
+*.csv
+
+# Archivos ocultos de sistema operativo
+.DS_Store
+Thumbs.db
+
+# Otros
+*.log

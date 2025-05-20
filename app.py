@@ -1,4 +1,4 @@
-# ✅ REPOSICIÓN TIENDAS v1.0 - Base con Prioridad y Selección de Método
+# ✅ SUGERIDO AUTOMÁTICO v1.0 - Asignación de Stock a Tiendas por Prioridad y Demanda
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -8,60 +8,77 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 # 1. CONFIGURACIÓN DE LA APP
-st.set_page_config(page_title="Reposición de Tiendas", layout="centered")
-st.title("🏪 Reposición de Productos a Tiendas (v1.0)")
+st.set_page_config(page_title="Sugerido Automático", layout="wide")
 
 st.markdown("""
-### 📦 ¿Qué hace este módulo?
+<style>
+h1, h2, h3 {
+    text-align: center;
+}
+hr {
+    margin-top: 1rem;
+    margin-bottom: 1rem;
+}
+</style>
+""", unsafe_allow_html=True)
 
-- Calcula la necesidad de reposición a tiendas en base a ventas recientes y stock actual.
-- Asigna el stock de bodega considerando prioridad de tiendas.
-- Permite elegir el método de asignación:
-  - 🔁 Asignación Directa por Prioridad
-  - ⚖️ Distribución Proporcional Ponderada
-- Exporta un archivo Excel con la asignación final, stock y resumen.
+st.markdown("""
+# 🤖 Sugerido Automático de Productos a Tiendas (v1.0)
+Automatiza la asignación de stock a tiendas en base a ventas recientes, stock actual y stock en bodega.
 """)
 
-# 2. CARGA DEL ARCHIVO
+# 2. ENLACE AL ARCHIVO DE EJEMPLO
+st.markdown("""
+### 📥 Archivo de ejemplo para probar la app
+👉 [Descargar archivo de ejemplo](https://github.com/sebasalinas27/SugeridoAutomatico/raw/main/archivo_ejemplo.xlsx)
+""")
+
+st.markdown("---")
+
+# 3. CARGA DEL ARCHIVO
 uploaded_file = st.file_uploader("Sube tu archivo Excel con ventas, stock y prioridades", type=["xlsx"])
 
 if uploaded_file:
-    # 3. VISTA PREVIA
+
+    # 4. VISTA PREVIA DE LOS DATOS
+    st.header("👁️ Vista previa de los datos cargados")
+    col1, col2 = st.columns(2)
     df_stock_tienda = pd.read_excel(uploaded_file, sheet_name="Stock Tienda")
     df_ventas = pd.read_excel(uploaded_file, sheet_name="Ventas")
     df_stock_bodega = pd.read_excel(uploaded_file, sheet_name="Stock Bodega")
     df_prioridad = pd.read_excel(uploaded_file, sheet_name="Prioridad Tiendas")
 
-    st.subheader("👁️ Vista previa de los datos cargados")
-    st.write("- Stock en tiendas:", df_stock_tienda.shape)
-    st.write("- Ventas registradas:", df_ventas.shape)
-    st.write("- Stock en bodega:", df_stock_bodega.shape)
-    st.write("- Prioridad de tiendas:", df_prioridad.shape)
+    col1.metric("📦 Stock en Tiendas", df_stock_tienda.shape[0])
+    col2.metric("🛒 Ventas Registradas", df_ventas.shape[0])
+    col1.metric("🏬 Tiendas", df_stock_tienda['Tienda'].nunique())
+    col2.metric("🔢 Códigos", df_stock_tienda['Codigo'].nunique())
 
-    # 4. PARÁMETROS Y SELECCIÓN DE MÉTODO
+    st.markdown("---")
+
+    # 5. SELECCIÓN DE MÉTODO DE ASIGNACIÓN
+    st.header("⚙️ Parámetros de asignación")
     metodo_asignacion = st.radio(
         "Selecciona el método de asignación de stock a tiendas:",
         ["🔁 Por prioridad directa", "⚖️ Por proporcionalidad ponderada"]
     )
 
+    # 6. EJECUCIÓN DEL MODELO
     if st.button("🚀 Ejecutar reposición"):
         try:
-            # 5. CÁLCULO DE REPOSICIÓN SUGERIDA (simple: promedio 4 semanas)
+            # 6.1 CÁLCULO DE REPOSICIÓN SUGERIDA
             df_ventas_recientes = df_ventas.sort_values("Semana", ascending=False).groupby(["Codigo", "Tienda"]).head(4)
             df_ventas_sugerido = df_ventas_recientes.groupby(["Codigo", "Tienda"]).agg({"Unidades Vendidas": "mean"}).reset_index()
             df_ventas_sugerido.rename(columns={"Unidades Vendidas": "Reposición Sugerida"}, inplace=True)
 
-            # Agregar stock actual y prioridad
             df = df_ventas_sugerido.merge(df_stock_tienda, on=["Codigo", "Tienda"], how="left")
             df = df.merge(df_prioridad, on="Tienda", how="left")
             df["Prioridad"] = pd.to_numeric(df["Prioridad"], errors='coerce').fillna(5)
             df["Reposición Necesaria"] = (df["Reposición Sugerida"] - df["Stock Actual"]).clip(lower=0)
 
-            # Bodega a dict
             stock_bodega = df_stock_bodega.set_index("Codigo")["Stock Disponible"].to_dict()
-
-            # 6. ASIGNACIÓN SEGÚN MÉTODO
             asignaciones = []
+
+            # 6.2 ASIGNACIÓN SEGÚN MÉTODO
             if metodo_asignacion == "🔁 Por prioridad directa":
                 for codigo in df["Codigo"].unique():
                     df_codigo = df[df["Codigo"] == codigo].sort_values("Prioridad")
@@ -71,28 +88,23 @@ if uploaded_file:
                         asignado = min(disponible, pedir)
                         disponible -= asignado
                         asignaciones.append({"Codigo": codigo, "Tienda": row["Tienda"], "Asignado": asignado})
-
-            else:  # proporcional ponderada
+            else:
                 for codigo in df["Codigo"].unique():
                     df_codigo = df[df["Codigo"] == codigo].copy()
                     disponible = stock_bodega.get(codigo, 0)
                     df_codigo = df_codigo[df_codigo["Reposición Necesaria"] > 0]
                     if df_codigo.empty or disponible == 0:
                         continue
-                    # Ponderador inverso a prioridad
                     df_codigo["Peso"] = 1 / df_codigo["Prioridad"]
                     df_codigo["Demanda Ponderada"] = df_codigo["Reposición Necesaria"] * df_codigo["Peso"]
                     total_ponderado = df_codigo["Demanda Ponderada"].sum()
                     for _, row in df_codigo.iterrows():
-                        asignado = min(
-                            disponible,
-                            disponible * row["Demanda Ponderada"] / total_ponderado
-                        )
+                        asignado = min(disponible, disponible * row["Demanda Ponderada"] / total_ponderado)
                         asignaciones.append({"Codigo": codigo, "Tienda": row["Tienda"], "Asignado": round(asignado)})
 
             df_asignacion = pd.DataFrame(asignaciones)
 
-            # 7. RESUMEN FINAL
+            # 6.3 RESUMEN FINAL
             stock_total = df_stock_bodega["Stock Disponible"].sum()
             sugerido_total = df["Reposición Necesaria"].sum()
             asignado_total = df_asignacion["Asignado"].sum()
@@ -121,11 +133,11 @@ if uploaded_file:
                 ]
             })
 
-            # 8. MOSTRAR RESUMEN EN APP
-            st.subheader("📋 Resumen de Reposición")
+            # 7. VISUALIZACIÓN Y EXPORTACIÓN
+            st.markdown("---")
+            st.header("📋 Resumen de Reposición")
             st.dataframe(df_resumen)
 
-            # 9. EXPORTACIÓN
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
                 df_asignacion.to_excel(writer, sheet_name="Asignación", index=False)
@@ -136,7 +148,7 @@ if uploaded_file:
             st.download_button(
                 label="📥 Descargar Excel de resultados",
                 data=output.getvalue(),
-                file_name="reposicion_resultados.xlsx",
+                file_name="sugerido_resultados.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 

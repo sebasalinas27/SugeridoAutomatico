@@ -131,7 +131,7 @@ if uploaded_file:
                     disponible = stock_bodega.get(codigo, 0)
                     for _, row in df_codigo.iterrows():
                         pedir = row["Reposición Necesaria"]
-                        asignado = min(disponible, pedir)
+                        asignado = int(min(disponible, pedir))
                         disponible -= asignado
                         asignaciones.append({"Codigo": codigo, "Tienda": row["Tienda"], "Asignado": asignado})
             else:
@@ -145,7 +145,7 @@ if uploaded_file:
                     df_codigo["Demanda Ponderada"] = df_codigo["Reposición Necesaria"] * df_codigo["Peso"]
                     total_ponderado = df_codigo["Demanda Ponderada"].sum()
                     for _, row in df_codigo.iterrows():
-                        asignado = min(disponible, disponible * row["Demanda Ponderada"] / total_ponderado)
+                        asignado = int(min(disponible, disponible * row["Demanda Ponderada"] / total_ponderado))
                         asignaciones.append({"Codigo": codigo, "Tienda": row["Tienda"], "Asignado": round(asignado)})
 
             df_asignacion = pd.DataFrame(asignaciones)

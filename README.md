@@ -1,68 +1,46 @@
-<p align="center">
-  <img src="https://img.shields.io/badge/streamlit-app-red?logo=streamlit" alt="Streamlit Badge"/>
-  <img src="https://img.shields.io/badge/python-3.10+-blue?logo=python" alt="Python Badge"/>
-  <img src="https://img.shields.io/badge/status-prototype-yellow" alt="Project Status"/>
-</p>
+# 🛒 Sugerido Automático – CPFR Simplificado
 
-<h1 align="center">🏪 Sugerido automatico WHS (v1.0)</h1>
-
-<p align="center">
-  Automatiza la asignación de stock a tiendas basado en ventas recientes, prioridad y stock de bodega.<br/>
-  Incluye selección de método de asignación, exportación en Excel y visualizaciones clave.
-</p>
+Herramienta para calcular sugeridos de reposición por **código/tienda** en entornos **retail/wholesale**, basada en principios de **CPFR (Collaborative Planning, Forecasting and Replenishment)**.
 
 ---
 
-## 📂 Estructura del archivo Excel de entrada
+## 🚀 ¿Qué hace esta app?
 
-El archivo debe contener **cuatro hojas** con la siguiente información:
-
-### 1. `Stock Tienda`
-| Codigo | Tienda | Stock Actual |
-|--------|--------|---------------|
-| A001   | Paris Arauco | 5       |
-
-### 2. `Ventas`
-| Codigo | Semana | Tienda | Unidades Vendidas |
-|--------|--------|--------|-------------------|
-| A001   | 2025-18 | Paris Arauco | 3         |
-
-### 3. `Stock Bodega`
-| Codigo | Stock Disponible |
-|--------|------------------|
-| A001   | 120              |
-
-### 4. `Prioridad Tiendas`
-| Tienda | Prioridad |
-|--------|-----------|
-| Paris Arauco | 1     |
-
-> 📌 Donde prioridad 1 es la más alta. Si una tienda no está en la tabla, se le asigna prioridad 5 por defecto.
+- Calcula el **pedido sugerido** por tienda y SKU usando:
+  - Ventas históricas (últimas 4 semanas)
+  - Stock actual en tienda
+  - Stock disponible en bodega
+- Aplica lógica CPFR simplificada:
+  - Forecast = Ventas promedio diaria × Horizonte
+  - Stock de seguridad configurable
+  - Política para SKUs sin histórico (mínimos iniciales)
+- Asigna pedidos respetando **stock disponible** y **prioridades**.
 
 ---
 
-## ⚙️ Lógica del sistema
+## 📂 Estructura del archivo Excel
 
-1. Calcula la **demanda sugerida** con el promedio de ventas de las últimas 4 semanas por tienda y código.
-2. Compara la demanda con el stock actual en tienda para estimar la **reposició‍n necesaria**.
-3. Distribuye el stock disponible de bodega según uno de los dos métodos seleccionados por el usuario:
-   - 🔁 **Por prioridad directa:** asigna secuencialmente desde la tienda más prioritaria.
-   - ⚖️ **Proporcional ponderada:** distribuye proporcionalmente según demanda y prioridad inversa.
+La app **solo acepta un archivo Excel** con las siguientes hojas:
+
+HojaColumnas requeridasstock_tiendastienda_id, sku, stock_tienda| **ventas_4sem**      | `tienda_id`, `sku`, `ventas_4_sem`                  |
+| **stock_disponible** | `sku`, `stock_disponible`                            |
+| **minimos_iniciales**| `sku`, `min_inicial` *(para SKUs sin histórico)*     |
+| **parametros**       | `cobertura_dias`, `lead_time_dias`, `ss_pct`, `pack_default`, `cobertura_incluye_leadtime`, `priorizar_sin_historico` |
+
+📥 **Descarga la plantilla aquí:**  
+[SugeridoAutomatico_template.xlsx](./SugeridoAutomatico_templateos
+
+ParámetroDescripcióncobertura_diasDías de cobertura objetivo (ej. 14)| **lead_time_dias**          | Tiempo de entrega en días (ej. 7)                                          |
+| **ss_pct**                  | Stock de seguridad como % del forecast (ej. 0.15 = 15%)                    |
+| **pack_default**            | Múltiplo mínimo de pedido (ej. 1 = sin restricción)                        |
+| **cobertura_incluye_leadtime** | TRUE si la cobertura ya incluye el lead time                              |
+| **priorizar_sin_historico** | TRUE para asignar primero SKUs sin ventas (mínimos)                        |
 
 ---
 
-## 📤 Archivos de salida
+## 🖥️ Cómo usar la app
 
-El sistema genera un Excel con 3 hojas:
-
-- `Asignación`: stock asignado por código y tienda.
-- `Reposición Sugerida`: cálculo base de demanda, stock y necesidad.
-- `Resumen Reposición`: resumen ejecutivo con métricas clave.
-
----
-
-## 🚀 Cómo ejecutarlo localmente
-
-```bash
-pip install streamlit pandas openpyxl xlsxwriter matplotlib seaborn
-streamlit run app.py
+1. **Clona el repositorio**:
+   ```bash
+   git clone https://github.com/sebasalinas27/SugeridoAutomatico.git
+   cd SugeridoAutomatico

@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from io import BytesIO
+from pathlib import Path
 
 # -----------------------------
 # Utilidades
@@ -155,6 +156,43 @@ st.set_page_config(page_title="Sugerido Automático (CPFR simplificado)", layout
 st.title("Sugerido Automático – Carga única por Excel")
 st.caption("Sube la plantilla Excel con todas las hojas. El cálculo se hace por código/tienda.")
 
+# --- Bloque informativo y descarga de plantilla (no cambia layout ni anchura) ---
+def render_about_and_download():
+    st.markdown(
+        """
+        <div style="padding:12px 16px;border:1px solid #E6E6E6;border-radius:10px;background:#FAFAFA;">
+          <h3 style="margin-top:0;">Acerca de esta app</h3>
+          <ul style="margin-bottom:8px;">
+            <li><b>Objetivo:</b> sugerir reposición por <i>código/tienda</i> con enfoque CPFR simplificado.</li>
+            <li><b>Cómo funciona:</b> 1) Sube el Excel, 2) Ajusta parámetros, 3) Calcula el sugerido.</li>
+            <li><b>Datos que usa:</b> ventas 4 semanas, stock en tienda, stock disponible y mínimos por SKU (para lanzamientos/sin histórico).</li>
+            <li><b>Salidas:</b> CSV por tienda/SKU, resumen por SKU y un Excel con ambos reportes.</li>
+          </ul>
+          <p style="margin:0;color:#333;"><i>Fórmula base:</i> pedido = max(0, forecast + SS − stock_tienda)</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    template_path = Path(__file__).with_name("SugeridoAutomatico_template.xlsx")
+    if template_path.exists():
+        with open(template_path, "rb") as f:
+            st.download_button(
+                label="⬇️ Descargar plantilla Excel (SugeridoAutomatico_template.xlsx)",
+                data=f.read(),
+                file_name="SugeridoAutomatico_template.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                help="Plantilla con todas las hojas y columnas requeridas"
+            )
+    else:
+        st.warning(
+            "No se encontró **SugeridoAutomatico_template.xlsx** en la carpeta del proyecto. "
+            "Agrega el archivo a la raíz del repo para habilitar la descarga."
+        )
+
+# MOSTRAR CARD + BOTÓN DE DESCARGA
+render_about_and_download()
+
 uploaded = st.file_uploader("Sube el archivo Excel: SugeridoAutomatico_template.xlsx", type=["xlsx"])
 
 if uploaded is not None:
@@ -253,4 +291,4 @@ if uploaded is not None:
     except Exception as e:
         st.error(f"Ocurrió un error leyendo el Excel: {e}")
 else:
-    st.info("Sube el archivo **SugeridoAutomatico_template.xlsx** para continuar.")
+    st.info("Sube el archivo **SugeridoAutomatico_template.xlsx** para continuar.")    

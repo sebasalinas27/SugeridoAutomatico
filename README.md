@@ -28,7 +28,9 @@ HojaColumnas requeridasstock_tiendastienda_id, sku, stock_tienda| **ventas_4sem*
 | **parametros**       | `cobertura_dias`, `lead_time_dias`, `ss_pct`, `pack_default`, `cobertura_incluye_leadtime`, `priorizar_sin_historico` |
 
 📥 **Descarga la plantilla aquí:**  
-[SugeridoAutomatico_template.xlsx](./SugeridoAutomatico_templateos
+[SugeridoAutomatico_template.xlsx](./SugeridoParámetros explicados
+
+!Parámetros
 
 ParámetroDescripcióncobertura_diasDías de cobertura objetivo (ej. 14)| **lead_time_dias**          | Tiempo de entrega en días (ej. 7)                                          |
 | **ss_pct**                  | Stock de seguridad como % del forecast (ej. 0.15 = 15%)                    |

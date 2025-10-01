@@ -153,7 +153,7 @@ def calcular_sugerido(
 # UI Streamlit
 # -----------------------------
 st.set_page_config(page_title="Sugerido Automático (CPFR simplificado)", layout="wide")
-st.title("Sugerido Automático – Carga única por Excel")
+st.title("Sugerido por CPFR simplificado")
 st.caption("Sube la plantilla Excel con todas las hojas. El cálculo se hace por código/tienda.")
 
 # --- Bloque informativo y descarga de plantilla (no cambia layout ni anchura) ---

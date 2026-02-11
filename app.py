@@ -1,294 +1,615 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
 from io import BytesIO
-from pathlib import Path
+from datetime import datetime
 
-# -----------------------------
-# Utilidades
-# -----------------------------
-def normaliza_cols(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [c.strip().lower() for c in df.columns]
-    return df
+# Configuración de página
+st.set_page_config(
+    page_title="Sugerido Automático v2",
+    page_icon="📦",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-def validar_columnas(df: pd.DataFrame, requeridas: set, nombre: str) -> None:
-    cols = set(df.columns)
-    faltantes = requeridas - cols
-    if faltantes:
-        st.error(f"Faltan columnas en hoja '{nombre}': {faltantes}")
-        st.stop()
+# Estilos personalizados
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 32px;
+        font-weight: bold;
+        color: #1f77b4;
+        margin-bottom: 10px;
+    }
+    .step-header {
+        font-size: 20px;
+        font-weight: bold;
+        color: #2ca02c;
+        margin-top: 20px;
+        margin-bottom: 10px;
+        border-left: 4px solid #2ca02c;
+        padding-left: 10px;
+    }
+    .metric-box {
+        background-color: #f0f2f6;
+        padding: 15px;
+        border-radius: 8px;
+        margin: 10px 0;
+    }
+    .warning-box {
+        background-color: #fff3cd;
+        padding: 12px;
+        border-radius: 5px;
+        margin: 10px 0;
+        border-left: 4px solid #ffc107;
+    }
+    .success-box {
+        background-color: #d4edda;
+        padding: 12px;
+        border-radius: 5px;
+        margin: 10px 0;
+        border-left: 4px solid #28a745;
+    }
+    .error-box {
+        background-color: #f8d7da;
+        padding: 12px;
+        border-radius: 5px;
+        margin: 10px 0;
+        border-left: 4px solid #dc3545;
+    }
+    .order-badge {
+        display: inline-block;
+        background-color: #0066cc;
+        color: white;
+        padding: 4px 8px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: bold;
+        margin-right: 5px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-def leer_parametro(df_params: pd.DataFrame, col: str, default):
-    try:
-        val = df_params.iloc[0][col]
-        if pd.isna(val):
-            return default
-        return val
-    except Exception:
-        return default
+# ==================== FUNCIONES AUXILIARES ====================
 
-def leer_parametro_bool(df_params: pd.DataFrame, col: str, default=False):
-    v = str(leer_parametro(df_params, col, default)).strip().lower()
-    if v in ["true", "1", "si", "sí", "y", "yes"]:
-        return True
-    if v in ["false", "0", "no", "n"]:
-        return False
-    return bool(default)
+def crear_template_descargable():
+    """Crea un template Excel descargable con estructura actualizada"""
+    output = BytesIO()
+    
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        # Hoja 1: Stock Tiendas (CON PRIORIDAD)
+        df_tiendas = pd.DataFrame({
+            'tienda_id': ['T001', 'T001', 'T001', 'T002', 'T002', 'T003', 'T003'],
+            'sku': ['SKU-001', 'SKU-002', 'SKU-003', 'SKU-001', 'SKU-002', 'SKU-001', 'SKU-003'],
+            'producto': ['Producto A', 'Producto B', 'Producto C', 'Producto A', 'Producto B', 'Producto A', 'Producto C'],
+            'stock_actual': [8, 0, 5, 3, 12, 1, 0],
+            'venta_ultima_semana': [5, 0, 2, 4, 6, 3, 0],
+            'venta_4_semanas': [22, 0, 8, 18, 24, 12, 0],
+            'tipo_carga': ['reposicion', 'inicial', 'reposicion', 'reposicion', 'reposicion', 'reposicion', 'inicial'],
+            'prioridad_tienda': [1, 1, 1, 2, 2, 3, 3]
+        })
+        df_tiendas.to_excel(writer, sheet_name='Stock Tiendas', index=False)
+        
+        # Hoja 2: Stock Disponible Bodega
+        df_bodega = pd.DataFrame({
+            'sku': ['SKU-001', 'SKU-002', 'SKU-003'],
+            'producto': ['Producto A', 'Producto B', 'Producto C'],
+            'stock_bodega': [150, 80, 45]
+        })
+        df_bodega.to_excel(writer, sheet_name='Stock Bodega', index=False)
+        
+        # Hoja 3: Parámetros
+        df_params = pd.DataFrame({
+            'parametro': ['Carga Mínima (reposición)', 'Carga Inicial (productos nuevos)'],
+            'valor': [2, 8],
+            'descripcion': ['Mínimo de unidades por tienda', 'Unidades iniciales para nuevos productos']
+        })
+        df_params.to_excel(writer, sheet_name='Parámetros', index=False)
+        
+        # Hoja 4: Instrucciones
+        df_instrucciones = pd.DataFrame({
+            'Campo': ['tienda_id', 'sku', 'producto', 'stock_actual', 'venta_ultima_semana', 'venta_4_semanas', 'tipo_carga', 'prioridad_tienda'],
+            'Descripción': [
+                'ID único de la tienda (ej: T001)',
+                'Código único del SKU (ej: SKU-001)',
+                'Nombre del producto (opcional)',
+                'Unidades actuales en tienda',
+                'Venta en últimos 7 días',
+                'Venta en últimas 4 semanas',
+                'Marca como "reposicion" o "inicial"',
+                'Orden de carga: 1=primero, 5=último'
+            ],
+            'Ejemplo': ['T001', 'SKU-001', 'Producto A', '8', '5', '22', 'reposicion', '1']
+        })
+        df_instrucciones.to_excel(writer, sheet_name='Instrucciones', index=False)
+        
+        writer.close()
+    
+    output.seek(0)
+    return output
 
-# -----------------------------
-# Cálculo Sugerido Automático
-# -----------------------------
-def calcular_sugerido(
-    stock_tiendas: pd.DataFrame,
-    ventas_4sem: pd.DataFrame,
-    stock_disponible: pd.DataFrame,
-    minimos_sku: pd.DataFrame,
-    cobertura_dias: int,
-    lead_time_dias: int,
-    ss_pct: float,
-    pack_default: int,
-    cobertura_incluye_leadtime: bool,
-    priorizar_sin_historico: bool,
-):
-    # Normalizar
-    stock_tiendas = normaliza_cols(stock_tiendas)
-    ventas_4sem = normaliza_cols(ventas_4sem)
-    stock_disponible = normaliza_cols(stock_disponible)
-    minimos_sku = normaliza_cols(minimos_sku)
+def calcular_sugerido_con_prioridad(df_tiendas, df_bodega, carga_minima, carga_inicial):
+    """
+    Calcula el sugerido de carga respetando PRIORIDAD de tiendas.
+    Procesa tienda por tienda en orden de prioridad hasta agotar bodega.
+    """
+    
+    # Crear copia mutable del stock bodega
+    stock_bodega_disponible = df_bodega.set_index('sku')['stock_bodega'].to_dict()
+    
+    # Ordenar por prioridad_tienda
+    df_tiendas_ordenadas = df_tiendas.sort_values(['prioridad_tienda', 'tienda_id', 'sku']).reset_index(drop=True)
+    
+    resultados = []
+    orden_carga = 0
+    bodega_agotada = False
+    
+    for idx, row in df_tiendas_ordenadas.iterrows():
+        if bodega_agotada:
+            estado = "No cargada"
+        else:
+            orden_carga += 1
+        
+        sku = row['sku']
+        tienda = row['tienda_id']
+        stock_actual = row['stock_actual']
+        tipo_carga = row['tipo_carga']
+        prioridad = row['prioridad_tienda']
+        
+        # Obtener stock disponible en bodega
+        stock_bodega = stock_bodega_disponible.get(sku, 0)
+        
+        # Determinar cantidad a reposición
+        if tipo_carga.lower() == 'inicial':
+            cantidad_sugerida = carga_inicial
+            razon = f"Carga inicial (nuevo producto)"
+        else:  # reposición
+            cantidad_sugerida = max(0, carga_minima - stock_actual)
+            if cantidad_sugerida == 0:
+                razon = "Tienda en nivel mínimo"
+            else:
+                razon = f"Reposición a mínimo ({carga_minima} unidades)"
+        
+        # Ajustar por disponibilidad en bodega y respetar prioridad
+        if bodega_agotada:
+            cantidad_real = 0
+            estado = "No cargada"
+        else:
+            cantidad_real = min(cantidad_sugerida, stock_bodega)
+            
+            if cantidad_real < cantidad_sugerida and cantidad_sugerida > 0:
+                estado = "Parcialmente cargada"
+                razon += f" (solo {cantidad_real} unidades disponibles)"
+            elif cantidad_real == 0 and cantidad_sugerida > 0:
+                estado = "No cargada"
+                razon += " (bodega insuficiente)"
+                bodega_agotada = True
+            else:
+                estado = "Completa"
+        
+        # Actualizar stock bodega
+        stock_bodega_disponible[sku] = stock_bodega - cantidad_real
+        disponible_despues = stock_bodega_disponible[sku]
+        stock_despues = stock_actual + cantidad_real
+        
+        if cantidad_real > 0:
+            bodega_agotada = False  # Solo marca como agotada si hay un producto que no se pudo cargar
+        
+        resultados.append({
+            'tienda_id': tienda,
+            'sku': sku,
+            'producto': row.get('producto', sku),
+            'prioridad': prioridad,
+            'stock_antes': stock_actual,
+            'stock_despues': stock_despues,
+            'cantidad_a_despachar': cantidad_real,
+            'razon': razon,
+            'venta_ultima_semana': row.get('venta_ultima_semana', 0),
+            'venta_4_semanas': row.get('venta_4_semanas', 0),
+            'stock_bodega_disponible': stock_bodega,
+            'stock_bodega_despues': disponible_despues,
+            'tipo_carga': tipo_carga,
+            'orden_carga': orden_carga,
+            'estado': estado
+        })
+    
+    df_resultados = pd.DataFrame(resultados)
+    
+    # Calcular resumen de completitud por tienda
+    resumen_tiendas = df_resultados.groupby('tienda_id').agg({
+        'estado': lambda x: (x == 'Completa').sum() / len(x),
+        'prioridad': 'first'
+    }).reset_index()
+    resumen_tiendas.columns = ['tienda_id', 'porcentaje_carga', 'prioridad']
+    
+    return df_resultados, resumen_tiendas, stock_bodega_disponible
 
-    # Validar
-    validar_columnas(stock_tiendas, {"tienda_id","sku","stock_tienda"}, "stock_tiendas")
-    validar_columnas(ventas_4sem, {"tienda_id","sku","ventas_4_sem"}, "ventas_4sem")
-    validar_columnas(stock_disponible, {"sku","stock_disponible"}, "stock_disponible")
-    if not minimos_sku.empty:
-        validar_columnas(minimos_sku, {"sku","min_inicial"}, "minimos_iniciales")
+def generar_reporte_descargable(df_resultados, df_bodega, stock_bodega_final):
+    """Genera un archivo Excel con los reportes de carga y bodega"""
+    output = BytesIO()
+    
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        # Hoja 1: Resumen ejecutivo
+        total_unidades = df_resultados['cantidad_a_despachar'].sum()
+        tiendas_completas = (df_resultados.groupby('tienda_id')['estado'].apply(lambda x: (x == 'Completa').all())).sum()
+        tiendas_parciales = (df_resultados.groupby('tienda_id')['estado'].apply(lambda x: ((x == 'Parcialmente cargada').any() and (x != 'Completa').any()))).sum()
+        tiendas_no_cargadas = (df_resultados.groupby('tienda_id')['estado'].apply(lambda x: (x == 'No cargada').all())).sum()
+        
+        resumen = pd.DataFrame({
+            'Métrica': [
+                'Total unidades a despachar',
+                'Total SKUs a reponer',
+                'Tiendas completamente cargadas',
+                'Tiendas parcialmente cargadas',
+                'Tiendas no cargadas',
+                'Stock bodega inicial',
+                'Stock bodega final',
+                'Stock bodega usado'
+            ],
+            'Valor': [
+                total_unidades,
+                df_resultados['sku'].nunique(),
+                tiendas_completas,
+                tiendas_parciales,
+                tiendas_no_cargadas,
+                df_bodega['stock_bodega'].sum(),
+                sum(stock_bodega_final.values()),
+                df_bodega['stock_bodega'].sum() - sum(stock_bodega_final.values())
+            ]
+        })
+        resumen.to_excel(writer, sheet_name='Resumen', index=False)
+        
+        # Hoja 2: Detalle por tienda (en orden de prioridad)
+        df_por_tienda = df_resultados[['orden_carga', 'tienda_id', 'prioridad', 'sku', 'producto', 'stock_antes', 
+                                        'stock_despues', 'cantidad_a_despachar', 'tipo_carga', 'estado']].copy()
+        df_por_tienda = df_por_tienda.sort_values(['orden_carga', 'tienda_id', 'sku'])
+        df_por_tienda.to_excel(writer, sheet_name='Detalle Tiendas', index=False)
+        
+        # Hoja 3: Carga por Prioridad
+        df_prioridad = df_resultados.groupby(['prioridad', 'tienda_id']).agg({
+            'cantidad_a_despachar': 'sum',
+            'estado': lambda x: 'Completa' if (x == 'Completa').all() else ('Parcial' if (x == 'Parcialmente cargada').any() else 'No cargada')
+        }).reset_index()
+        df_prioridad = df_prioridad.rename(columns={
+            'prioridad': 'Prioridad',
+            'tienda_id': 'Tienda',
+            'cantidad_a_despachar': 'Total Despachar',
+            'estado': 'Estado'
+        })
+        df_prioridad.to_excel(writer, sheet_name='Carga por Prioridad', index=False)
+        
+        # Hoja 4: Impacto bodega
+        df_bodega_impacto = df_resultados.groupby('sku').agg({
+            'cantidad_a_despachar': 'sum',
+            'stock_bodega_disponible': 'first',
+            'stock_bodega_despues': 'first'
+        }).reset_index()
+        df_bodega_impacto['stock_bodega_final'] = df_bodega_impacto['sku'].map(stock_bodega_final)
+        df_bodega_impacto = df_bodega_impacto.rename(columns={
+            'sku': 'SKU',
+            'cantidad_a_despachar': 'Total Despachar',
+            'stock_bodega_disponible': 'Stock Antes',
+            'stock_bodega_despues': 'Stock Después (calculado)',
+            'stock_bodega_final': 'Stock Final (real)'
+        })
+        df_bodega_impacto.to_excel(writer, sheet_name='Impacto Bodega', index=False)
+        
+        # Hoja 5: Antes vs Después (agrupado por tienda)
+        pivot_antes_despues = df_resultados.groupby('tienda_id').agg({
+            'stock_antes': 'sum',
+            'stock_despues': 'sum',
+            'cantidad_a_despachar': 'sum',
+            'estado': lambda x: 'Completa' if (x == 'Completa').all() else ('Parcial' if (x == 'Parcialmente cargada').any() else 'No cargada'),
+            'prioridad': 'first'
+        }).reset_index()
+        pivot_antes_despues['diferencia'] = pivot_antes_despues['stock_despues'] - pivot_antes_despues['stock_antes']
+        pivot_antes_despues = pivot_antes_despues.rename(columns={
+            'tienda_id': 'Tienda',
+            'stock_antes': 'Stock Antes',
+            'stock_despues': 'Stock Después',
+            'cantidad_a_despachar': 'Despachar',
+            'diferencia': 'Cambio',
+            'estado': 'Estado',
+            'prioridad': 'Prioridad'
+        })
+        pivot_antes_despues = pivot_antes_despues[['Prioridad', 'Tienda', 'Stock Antes', 'Stock Después', 'Cambio', 'Despachar', 'Estado']]
+        pivot_antes_despues.to_excel(writer, sheet_name='Antes vs Después', index=False)
+        
+        writer.close()
+    
+    output.seek(0)
+    return output
 
-    # Horizonte
-    H = int(cobertura_dias) if cobertura_incluye_leadtime else int(cobertura_dias) + int(lead_time_dias)
+# ==================== INTERFAZ PRINCIPAL ====================
 
-    # Unificar base
-    df = (stock_tiendas.merge(ventas_4sem, on=["tienda_id","sku"], how="outer")
-                      .merge(stock_disponible, on="sku", how="left"))
+st.markdown('<div class="main-header">📦 Sugerido Automático v2</div>', unsafe_allow_html=True)
+st.markdown("**Repone automáticamente tu inventario respetando PRIORIDAD de tiendas**")
+st.divider()
 
-    df["stock_tienda"] = pd.to_numeric(df["stock_tienda"], errors="coerce").fillna(0.0)
-    df["ventas_4_sem"] = pd.to_numeric(df["ventas_4_sem"], errors="coerce").fillna(0.0)
-    df["stock_disponible"] = pd.to_numeric(df["stock_disponible"], errors="coerce").fillna(0.0)
+# Sidebar con pasos
+with st.sidebar:
+    st.markdown("### 📋 Pasos")
+    step = st.radio("Selecciona un paso:", 
+                    ["1️⃣ Descargar Template", 
+                     "2️⃣ Cargar Datos",
+                     "3️⃣ Configurar Parámetros",
+                     "4️⃣ Generar Sugerido",
+                     "5️⃣ Descargar Reporte"],
+                    label_visibility="collapsed")
 
-    # Traer mínimos por SKU (opcional)
-    if not minimos_sku.empty:
-        df = df.merge(minimos_sku.rename(columns={"min_inicial":"min_inicial_sku"}), on="sku", how="left")
-    else:
-        df["min_inicial_sku"] = np.nan
-
-    # Métricas base
-    df["vpd"] = df["ventas_4_sem"] / 28.0
-    df["horizon_dias"] = H
-    df["forecast"] = df["vpd"] * df["horizon_dias"]
-    df["ss"] = df["forecast"] * float(ss_pct)
-
-    # Pedido bruto
-    cond_hist = df["vpd"] > 0
-    df["pedido_bruto"] = 0.0
-    df.loc[cond_hist, "pedido_bruto"] = np.maximum(
-        0.0, df.loc[cond_hist,"forecast"] + df.loc[cond_hist,"ss"] - df.loc[cond_hist,"stock_tienda"]
-    )
-    df.loc[~cond_hist, "pedido_bruto"] = np.maximum(
-        0.0, df.loc[~cond_hist,"min_inicial_sku"].fillna(0.0) - df.loc[~cond_hist,"stock_tienda"]
-    )
-
-    # Comentarios iniciales
-    df["comentario"] = ""
-    df.loc[~cond_hist & df["min_inicial_sku"].notna(), "comentario"] = "sin histórico - mínimo inicial"
-    df.loc[~cond_hist & df["min_inicial_sku"].isna(), "comentario"] = "sin histórico - sin mínimo definido"
-
-    # Prioridad de asignación
-    EPS = 1e-9
-    df["cover_dias"] = df["stock_tienda"] / (df["vpd"] + EPS)
-    df["pedido_final"] = 0.0
-
-    for sku, grp in df.groupby("sku", sort=False):
-        rem = float(grp["stock_disponible"].iloc[0]) if len(grp) else 0.0
-        if rem <= 0:
-            continue
-
-        idx_hist = grp[grp["vpd"] > 0].sort_values(by=["cover_dias","vpd"], ascending=[True, False]).index
-        idx_sin_hist = grp[grp["vpd"] <= 0].index
-
-        orden = list(idx_hist) + list(idx_sin_hist)
-        if priorizar_sin_historico:
-            orden = list(idx_sin_hist) + list(idx_hist)
-
-        for idx in orden:
-            pedido = float(df.at[idx, "pedido_bruto"])
-            if pedido <= 0 or rem <= 0:
-                continue
-            pack = max(1, int(pack_default))
-            asignado = min(pedido, rem)
-            asignado = pack * np.floor(asignado / pack)
-            if asignado <= 0 and rem > 0 and pedido > 0:
-                asignado = min(pack, rem)
-
-            df.at[idx, "pedido_final"] = asignado
-            if asignado < pedido:
-                df.at[idx, "comentario"] = (df.at[idx, "comentario"] + "; " if df.at[idx, "comentario"] else "") + "capado por stock disponible"
-            rem -= asignado
-
-    # Resumen por SKU
-    resumen = (df.groupby("sku", as_index=False)
-                 .agg(stock_disponible=("stock_disponible","first"),
-                      asignado_total=("pedido_final","sum")))
-    resumen["remanente_bodega"] = resumen["stock_disponible"] - resumen["asignado_total"]
-
-    # Orden columnas output
-    cols = ["tienda_id","sku","stock_tienda","ventas_4_sem","vpd","horizon_dias","forecast","ss","pedido_bruto","pedido_final","comentario"]
-    for c in cols:
-        if c not in df.columns: df[c] = np.nan
-    df_out = df[cols].copy()
-
-    return df_out, resumen
-
-# -----------------------------
-# UI Streamlit
-# -----------------------------
-st.set_page_config(page_title="Sugerido Automático (CPFR simplificado)", layout="wide")
-st.title("Sugerido por CPFR simplificado")
-st.caption("Sube la plantilla Excel con todas las hojas. El cálculo se hace por código/tienda.")
-
-# --- Bloque informativo y descarga de plantilla (no cambia layout ni anchura) ---
-def render_about_and_download():
-    st.markdown(
-        """
-        <div style="padding:12px 16px;border:1px solid #E6E6E6;border-radius:10px;background:#FAFAFA;">
-          <h3 style="margin-top:0;">Acerca de esta app</h3>
-          <ul style="margin-bottom:8px;">
-            <li><b>Objetivo:</b> sugerir reposición por <i>código/tienda</i> con enfoque CPFR simplificado.</li>
-            <li><b>Cómo funciona:</b> 1) Sube el Excel, 2) Ajusta parámetros, 3) Calcula el sugerido.</li>
-            <li><b>Datos que usa:</b> ventas 4 semanas, stock en tienda, stock disponible y mínimos por SKU (para lanzamientos/sin histórico).</li>
-            <li><b>Salidas:</b> CSV por tienda/SKU, resumen por SKU y un Excel con ambos reportes.</li>
-          </ul>
-          <p style="margin:0;color:#333;"><i>Fórmula base:</i> pedido = max(0, forecast + SS − stock_tienda)</p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    template_path = Path(__file__).with_name("SugeridoAutomatico_template.xlsx")
-    if template_path.exists():
-        with open(template_path, "rb") as f:
-            st.download_button(
-                label="⬇️ Descargar plantilla Excel (SugeridoAutomatico_template.xlsx)",
-                data=f.read(),
-                file_name="SugeridoAutomatico_template.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                help="Plantilla con todas las hojas y columnas requeridas"
-            )
-    else:
-        st.warning(
-            "No se encontró **SugeridoAutomatico_template.xlsx** en la carpeta del proyecto. "
-            "Agrega el archivo a la raíz del repo para habilitar la descarga."
+# PASO 1: Descargar Template
+if "1️⃣" in step:
+    st.markdown('<div class="step-header">Paso 1: Descargar Template</div>', unsafe_allow_html=True)
+    
+    st.info("📌 Descarga el template y completa con tus datos.")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("""
+        **¿Qué necesitas?**
+        - Stock actual por SKU y tienda
+        - Ventas última semana y 4 semanas
+        - Stock disponible en bodega
+        - **Tipo de carga:** inicial o reposición
+        - **Prioridad tienda:** 1=urgente, 5=menos urgente
+        """)
+    
+    with col2:
+        template = crear_template_descargable()
+        st.download_button(
+            label="⬇️ Descargar Template Excel",
+            data=template,
+            file_name=f"SugeridoAutomatico_Template_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
         )
+    
+    st.markdown('<div class="warning-box"><strong>💡 Tip:</strong> El template tiene 4 hojas. La columna <strong>prioridad_tienda</strong> determina el orden de carga (1→2→3).</div>', unsafe_allow_html=True)
 
-# MOSTRAR CARD + BOTÓN DE DESCARGA
-render_about_and_download()
+# PASO 2: Cargar Datos
+elif "2️⃣" in step:
+    st.markdown('<div class="step-header">Paso 2: Cargar Datos</div>', unsafe_allow_html=True)
+    
+    uploaded_file = st.file_uploader("📥 Carga tu archivo Excel", type=['xlsx', 'xls'])
+    
+    if uploaded_file is not None:
+        try:
+            # Leer las hojas
+            df_tiendas = pd.read_excel(uploaded_file, sheet_name='Stock Tiendas')
+            df_bodega = pd.read_excel(uploaded_file, sheet_name='Stock Bodega')
+            df_params = pd.read_excel(uploaded_file, sheet_name='Parámetros')
+            
+            # Guardar en session state
+            st.session_state['df_tiendas'] = df_tiendas
+            st.session_state['df_bodega'] = df_bodega
+            st.session_state['df_params'] = df_params
+            
+            st.markdown('<div class="success-box"><strong>✅ Datos cargados correctamente!</strong></div>', unsafe_allow_html=True)
+            
+            # Mostrar preview
+            st.markdown("**Preview de datos:**")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**Stock Tiendas:**")
+                st.dataframe(df_tiendas, use_container_width=True)
+            
+            with col2:
+                st.markdown("**Stock Bodega:**")
+                st.dataframe(df_bodega, use_container_width=True)
+            
+        except Exception as e:
+            st.error(f"❌ Error al cargar archivo: {e}")
+            st.info("Asegúrate que el archivo tiene las hojas: 'Stock Tiendas', 'Stock Bodega' y 'Parámetros'")
 
-uploaded = st.file_uploader("Sube el archivo Excel: SugeridoAutomatico_template.xlsx", type=["xlsx"])
+# PASO 3: Configurar Parámetros
+elif "3️⃣" in step:
+    st.markdown('<div class="step-header">Paso 3: Configurar Parámetros</div>', unsafe_allow_html=True)
+    
+    if 'df_tiendas' not in st.session_state:
+        st.warning("⚠️ Primero carga los datos en el Paso 2")
+    else:
+        st.markdown("""
+        Ajusta los parámetros de reposición. Estos determinan cuánto stock debe tener cada tienda.
+        """)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            carga_minima = st.number_input(
+                "🏪 Carga Mínima (reposición)",
+                min_value=1,
+                max_value=20,
+                value=2,
+                help="Número mínimo de unidades que debe tener una tienda de un producto"
+            )
+            st.markdown('<div class="metric-box"><strong>Ejemplo:</strong> Si tienda tiene 0 unidades, se repone a 2</div>', unsafe_allow_html=True)
+        
+        with col2:
+            carga_inicial = st.number_input(
+                "🆕 Carga Inicial (productos nuevos)",
+                min_value=1,
+                max_value=30,
+                value=8,
+                help="Cantidad de unidades iniciales para productos nuevos"
+            )
+            st.markdown('<div class="metric-box"><strong>Ejemplo:</strong> Nuevo producto se carga con 8 unidades</div>', unsafe_allow_html=True)
+        
+        # Guardar parámetros
+        st.session_state['carga_minima'] = carga_minima
+        st.session_state['carga_inicial'] = carga_inicial
+        
+        st.success("✅ Parámetros configurados")
 
-if uploaded is not None:
-    try:
-        xls = pd.ExcelFile(uploaded)
-        hojas = {name: normaliza_cols(pd.read_excel(xls, sheet_name=name)) for name in xls.sheet_names}
-
-        requeridas = ["stock_tiendas","ventas_4sem","stock_disponible","parametros"]
-        faltan = [h for h in requeridas if h not in hojas]
-        if faltan:
-            st.error(f"Faltan hojas obligatorias en el Excel: {faltan}")
-            st.stop()
-
-        stock_tiendas = hojas["stock_tiendas"]
-        ventas_4sem = hojas["ventas_4sem"]
-        stock_disponible = hojas["stock_disponible"]
-        minimos_sku = hojas.get("minimos_iniciales", pd.DataFrame())
-        df_params = hojas["parametros"]
-
-        # Leer parámetros desde hoja
-        cobertura_dias = int(leer_parametro(df_params, "cobertura_dias", 14))
-        lead_time_dias = int(leer_parametro(df_params, "lead_time_dias", 7))
-        ss_pct = float(leer_parametro(df_params, "ss_pct", 0.15))
-        pack_default = int(leer_parametro(df_params, "pack_default", 1))
-        cobertura_incluye_lt = leer_parametro_bool(df_params, "cobertura_incluye_leadtime", False)
-        priorizar_sin_hist = leer_parametro_bool(df_params, "priorizar_sin_historico", False)
-
-        with st.sidebar:
-            st.subheader("Parámetros (desde el Excel)")
-            cobertura_dias = st.number_input("Cobertura (días)", min_value=1, value=int(cobertura_dias))
-            lead_time_dias = st.number_input("Lead Time (días)", min_value=0, value=int(lead_time_dias))
-            cobertura_incluye_lt = st.checkbox("Cobertura incluye Lead Time (H = cobertura)", value=bool(cobertura_incluye_lt))
-            ss_pct = st.number_input("Stock de seguridad (% forecast)", min_value=0.0, max_value=1.0, value=float(ss_pct), step=0.05, format="%.2f")
-            pack_default = st.number_input("Múltiplo de pedido (pack)", min_value=1, value=int(pack_default), step=1)
-            priorizar_sin_hist = st.checkbox("Priorizar mínimos (sin histórico) primero", value=bool(priorizar_sin_hist))
-
-        st.markdown("### Vista previa de datos")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.write("**stock_tiendas**")
-            st.dataframe(stock_tiendas.head(10), use_container_width=True, height=220)
-            st.write("**ventas_4sem**")
-            st.dataframe(ventas_4sem.head(10), use_container_width=True, height=220)
-        with c2:
-            st.write("**stock_disponible**")
-            st.dataframe(stock_disponible.head(10), use_container_width=True, height=220)
-            if not minimos_sku.empty:
-                st.write("**minimos_iniciales**")
-                st.dataframe(minimos_sku.head(10), use_container_width=True, height=220)
-
+# PASO 4: Generar Sugerido
+elif "4️⃣" in step:
+    st.markdown('<div class="step-header">Paso 4: Generar Sugerido</div>', unsafe_allow_html=True)
+    
+    if 'df_tiendas' not in st.session_state or 'carga_minima' not in st.session_state:
+        st.warning("⚠️ Completa los pasos anteriores primero (cargar datos y parámetros)")
+    else:
+        # Calcular sugerido con prioridad
+        df_resultados, resumen_tiendas, stock_bodega_final = calcular_sugerido_con_prioridad(
+            st.session_state['df_tiendas'],
+            st.session_state['df_bodega'],
+            st.session_state['carga_minima'],
+            st.session_state['carga_inicial']
+        )
+        
+        st.session_state['df_resultados'] = df_resultados
+        st.session_state['stock_bodega_final'] = stock_bodega_final
+        
+        # Resumen ejecutivo
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("📦 Total a Despachar", f"{df_resultados['cantidad_a_despachar'].sum()} unidades")
+        
+        with col2:
+            tiendas_completas = (df_resultados.groupby('tienda_id')['estado'].apply(lambda x: (x == 'Completa').all())).sum()
+            st.metric("✅ Tiendas Completas", tiendas_completas)
+        
+        with col3:
+            st.metric("📊 SKUs", df_resultados['sku'].nunique())
+        
+        with col4:
+            bodega_usado = st.session_state['df_bodega']['stock_bodega'].sum() - sum(stock_bodega_final.values())
+            bodega_total = st.session_state['df_bodega']['stock_bodega'].sum()
+            st.metric("🏭 Bodega Usado", f"{bodega_usado}/{bodega_total}")
+        
         st.divider()
-        if st.button("Calcular sugerido", type="primary"):
-            df_out, resumen = calcular_sugerido(
-                stock_tiendas, ventas_4sem, stock_disponible, minimos_sku,
-                cobertura_dias=cobertura_dias,
-                lead_time_dias=lead_time_dias,
-                ss_pct=ss_pct,
-                pack_default=pack_default,
-                cobertura_incluye_leadtime=cobertura_incluye_lt,
-                priorizar_sin_historico=priorizar_sin_hist
-            )
+        
+        # Alertas de completitud
+        tiendas_parciales = (df_resultados.groupby('tienda_id')['estado'].apply(lambda x: ((x == 'Parcialmente cargada').any() or (x == 'No cargada').any()))).sum()
+        tiendas_no_cargadas = (df_resultados.groupby('tienda_id')['estado'].apply(lambda x: (x == 'No cargada').all())).sum()
+        
+        if tiendas_no_cargadas > 0:
+            st.markdown(f'<div class="error-box"><strong>🔴 Bodega insuficiente:</strong> {tiendas_no_cargadas} tienda(s) no se cargó/cargaron (bodega agotada)</div>', unsafe_allow_html=True)
+        elif tiendas_parciales > 0:
+            st.markdown(f'<div class="warning-box"><strong>🟡 Carga parcial:</strong> {tiendas_parciales} tienda(s) cargada(s) parcialmente</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="success-box"><strong>🟢 Éxito:</strong> ✅ Todas las tiendas cargadas correctamente</div>', unsafe_allow_html=True)
+        
+        st.divider()
+        
+        # Tabs para diferentes vistas
+        tab1, tab2, tab3, tab4 = st.tabs(["📋 Detalle Completo", "🏪 Por Tienda", "🏭 Impacto Bodega", "📍 Orden de Carga"])
+        
+        with tab1:
+            st.markdown("**Detalle completo de la carga recomendada:**")
+            df_display = df_resultados[['orden_carga', 'tienda_id', 'sku', 'producto', 'stock_antes', 
+                                        'stock_despues', 'cantidad_a_despachar', 'razon', 'tipo_carga', 'estado']].copy()
+            df_display = df_display.rename(columns={
+                'orden_carga': 'Orden',
+                'tienda_id': 'Tienda',
+                'sku': 'SKU',
+                'producto': 'Producto',
+                'stock_antes': 'Stock Antes',
+                'stock_despues': 'Stock Después',
+                'cantidad_a_despachar': 'Despachar',
+                'razon': 'Razón',
+                'tipo_carga': 'Tipo',
+                'estado': 'Estado'
+            })
+            st.dataframe(df_display, use_container_width=True)
+        
+        with tab2:
+            st.markdown("**Resumen antes vs después por tienda:**")
+            df_por_tienda = df_resultados.groupby('tienda_id').agg({
+                'prioridad': 'first',
+                'stock_antes': 'sum',
+                'stock_despues': 'sum',
+                'cantidad_a_despachar': 'sum'
+            }).reset_index()
+            df_por_tienda['cambio'] = df_por_tienda['stock_despues'] - df_por_tienda['stock_antes']
+            df_por_tienda = df_por_tienda.rename(columns={
+                'tienda_id': 'Tienda',
+                'prioridad': 'Prioridad',
+                'stock_antes': 'Stock Antes',
+                'stock_despues': 'Stock Después',
+                'cantidad_a_despachar': 'Total Despachar',
+                'cambio': 'Cambio'
+            })
+            st.dataframe(df_por_tienda, use_container_width=True)
+            
+            # Gráfico
+            col1, col2 = st.columns(2)
+            with col1:
+                st.bar_chart(df_por_tienda.set_index('Tienda')[['Stock Antes', 'Stock Después']])
+            with col2:
+                st.bar_chart(df_por_tienda.set_index('Tienda')['Total Despachar'])
+        
+        with tab3:
+            st.markdown("**Impacto en el stock de bodega:**")
+            df_bodega_impacto = df_resultados.groupby('sku').agg({
+                'cantidad_a_despachar': 'sum',
+                'stock_bodega_disponible': 'first',
+                'stock_bodega_despues': 'first'
+            }).reset_index()
+            df_bodega_impacto = df_bodega_impacto.rename(columns={
+                'sku': 'SKU',
+                'cantidad_a_despachar': 'Total Despachar',
+                'stock_bodega_disponible': 'Stock Antes',
+                'stock_bodega_despues': 'Stock Después'
+            })
+            st.dataframe(df_bodega_impacto, use_container_width=True)
+        
+        with tab4:
+            st.markdown("**Orden de carga por prioridad de tienda:**")
+            df_orden = df_resultados[['orden_carga', 'prioridad', 'tienda_id', 'sku', 'producto', 'cantidad_a_despachar', 'estado']].copy()
+            df_orden = df_orden[df_orden['cantidad_a_despachar'] > 0].drop_duplicates(subset=['orden_carga', 'tienda_id', 'sku'])
+            df_orden = df_orden.sort_values('orden_carga')
+            df_orden = df_orden.rename(columns={
+                'orden_carga': 'Orden de Carga',
+                'prioridad': 'Prioridad',
+                'tienda_id': 'Tienda',
+                'sku': 'SKU',
+                'producto': 'Producto',
+                'cantidad_a_despachar': 'Cantidad',
+                'estado': 'Estado'
+            })
+            st.dataframe(df_orden, use_container_width=True)
+            
+            st.markdown("**Secuencia:**")
+            for idx, row in df_orden.iterrows():
+                if row['Estado'] == 'Completa':
+                    color = "🟢"
+                elif row['Estado'] == 'Parcialmente cargada':
+                    color = "🟡"
+                else:
+                    color = "❌"
+                st.markdown(f"{color} **Orden {row['Orden de Carga']}:** {row['Tienda']} (Prioridad {row['Prioridad']}) - {row['SKU']} - {row['Cantidad']} unidades")
 
-            st.success("¡Cálculo finalizado!")
-            st.subheader("Sugerido por tienda / SKU")
-            st.dataframe(df_out, use_container_width=True, height=320)
+# PASO 5: Descargar Reporte
+elif "5️⃣" in step:
+    st.markdown('<div class="step-header">Paso 5: Descargar Reporte</div>', unsafe_allow_html=True)
+    
+    if 'df_resultados' not in st.session_state:
+        st.warning("⚠️ Primero genera el sugerido en el Paso 4")
+    else:
+        st.info("📌 Descarga el reporte con todos los detalles de la carga")
+        
+        reporte = generar_reporte_descargable(
+            st.session_state['df_resultados'],
+            st.session_state['df_bodega'],
+            st.session_state['stock_bodega_final']
+        )
+        
+        st.download_button(
+            label="⬇️ Descargar Reporte Excel",
+            data=reporte,
+            file_name=f"SugeridoAutomatico_Reporte_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+        
+        st.markdown('<div class="success-box"><strong>✅ El reporte incluye:</strong><br>• Resumen ejecutivo<br>• Detalle por tienda (en orden de prioridad)<br>• Carga por prioridad<br>• Impacto en bodega<br>• Antes vs Después</div>', unsafe_allow_html=True)
 
-            st.subheader("Resumen por SKU")
-            st.dataframe(resumen, use_container_width=True, height=240)
-
-            # Descargas
-            st.download_button(
-                "Descargar sugerido_por_tienda.csv",
-                data=df_out.to_csv(index=False).encode("utf-8"),
-                file_name="sugerido_por_tienda.csv",
-                mime="text/csv"
-            )
-            st.download_button(
-                "Descargar resumen_por_sku.csv",
-                data=resumen.to_csv(index=False).encode("utf-8"),
-                file_name="resumen_por_sku.csv",
-                mime="text/csv"
-            )
-
-            bio = BytesIO()
-            with pd.ExcelWriter(bio, engine="openpyxl") as writer:
-                df_out.to_excel(writer, index=False, sheet_name="sugerido")
-                resumen.to_excel(writer, index=False, sheet_name="resumen")
-            bio.seek(0)
-            st.download_button(
-                "Descargar resultados.xlsx",
-                data=bio.getvalue(),
-                file_name="resultados_sugerido.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
-    except Exception as e:
-        st.error(f"Ocurrió un error leyendo el Excel: {e}")
-else:
-    st.info("Sube el archivo **SugeridoAutomatico_template.xlsx** para continuar.")    
+# Footer
+st.divider()
+st.markdown("""
+<div style='text-align: center; color: #666; margin-top: 20px;'>
+    <small>v2.1 | Sugerido Automático | Sistema de Reposición por Prioridad</small>
+</div>
+""", unsafe_allow_html=True)

@@ -6,7 +6,7 @@ from datetime import datetime
 
 # Configuración de página
 st.set_page_config(
-    page_title="Sugerido Automático v2",
+    page_title="Sugerido Automático v2.2",
     page_icon="📦",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -100,9 +100,9 @@ def crear_template_descargable():
         
         # Hoja 3: Parámetros
         df_params = pd.DataFrame({
-            'parametro': ['Carga Mínima (reposición)', 'Carga Inicial (productos nuevos)'],
-            'valor': [2, 8],
-            'descripcion': ['Mínimo de unidades por tienda', 'Unidades iniciales para nuevos productos']
+            'parametro': ['Carga Mínima (reposición)', 'Carga Inicial (productos nuevos)', 'Máximo por SKU/Tienda'],
+            'valor': [2, 8, 20],
+            'descripcion': ['Mínimo de unidades por tienda', 'Unidades iniciales para nuevos productos', 'Máximo de unidades por SKU en una tienda']
         })
         df_params.to_excel(writer, sheet_name='Parámetros', index=False)
         
@@ -128,10 +128,11 @@ def crear_template_descargable():
     output.seek(0)
     return output
 
-def calcular_sugerido_con_prioridad(df_tiendas, df_bodega, carga_minima, carga_inicial):
+def calcular_sugerido_con_prioridad(df_tiendas, df_bodega, carga_minima, carga_inicial, carga_maxima):
     """
-    Calcula el sugerido de carga respetando PRIORIDAD de tiendas.
-    Procesa tienda por tienda en orden de prioridad hasta agotar bodega.
+    Calcula el sugerido de carga respetando:
+    1. PRIORIDAD de tiendas
+    2. MÁXIMO de carga por SKU/tienda
     """
     
     # Crear copia mutable del stock bodega
@@ -142,13 +143,9 @@ def calcular_sugerido_con_prioridad(df_tiendas, df_bodega, carga_minima, carga_i
     
     resultados = []
     orden_carga = 0
-    bodega_agotada = False
     
     for idx, row in df_tiendas_ordenadas.iterrows():
-        if bodega_agotada:
-            estado = "No cargada"
-        else:
-            orden_carga += 1
+        orden_carga += 1
         
         sku = row['sku']
         tienda = row['tienda_id']
@@ -159,7 +156,7 @@ def calcular_sugerido_con_prioridad(df_tiendas, df_bodega, carga_minima, carga_i
         # Obtener stock disponible en bodega
         stock_bodega = stock_bodega_disponible.get(sku, 0)
         
-        # Determinar cantidad a reposición
+        # Determinar cantidad sugerida
         if tipo_carga.lower() == 'inicial':
             cantidad_sugerida = carga_inicial
             razon = f"Carga inicial (nuevo producto)"
@@ -170,30 +167,25 @@ def calcular_sugerido_con_prioridad(df_tiendas, df_bodega, carga_minima, carga_i
             else:
                 razon = f"Reposición a mínimo ({carga_minima} unidades)"
         
-        # Ajustar por disponibilidad en bodega y respetar prioridad
-        if bodega_agotada:
-            cantidad_real = 0
+        # APLICAR MÁXIMO DE CARGA por SKU/tienda
+        cantidad_sugerida = min(cantidad_sugerida, carga_maxima)
+        
+        # Ajustar por disponibilidad en bodega
+        cantidad_real = min(cantidad_sugerida, stock_bodega)
+        
+        if cantidad_real < cantidad_sugerida and cantidad_sugerida > 0:
+            estado = "Parcialmente cargada"
+            razon += f" (solo {cantidad_real} de {cantidad_sugerida} disponibles)"
+        elif cantidad_real == 0 and cantidad_sugerida > 0:
             estado = "No cargada"
+            razon += " (bodega insuficiente)"
         else:
-            cantidad_real = min(cantidad_sugerida, stock_bodega)
-            
-            if cantidad_real < cantidad_sugerida and cantidad_sugerida > 0:
-                estado = "Parcialmente cargada"
-                razon += f" (solo {cantidad_real} unidades disponibles)"
-            elif cantidad_real == 0 and cantidad_sugerida > 0:
-                estado = "No cargada"
-                razon += " (bodega insuficiente)"
-                bodega_agotada = True
-            else:
-                estado = "Completa"
+            estado = "Completa" if cantidad_sugerida > 0 else "Sin necesidad"
         
         # Actualizar stock bodega
         stock_bodega_disponible[sku] = stock_bodega - cantidad_real
         disponible_despues = stock_bodega_disponible[sku]
         stock_despues = stock_actual + cantidad_real
-        
-        if cantidad_real > 0:
-            bodega_agotada = False  # Solo marca como agotada si hay un producto que no se pudo cargar
         
         resultados.append({
             'tienda_id': tienda,
@@ -210,7 +202,8 @@ def calcular_sugerido_con_prioridad(df_tiendas, df_bodega, carga_minima, carga_i
             'stock_bodega_despues': disponible_despues,
             'tipo_carga': tipo_carga,
             'orden_carga': orden_carga,
-            'estado': estado
+            'estado': estado,
+            'carga_maxima_aplicada': carga_maxima
         })
     
     df_resultados = pd.DataFrame(resultados)
@@ -235,6 +228,8 @@ def generar_reporte_descargable(df_resultados, df_bodega, stock_bodega_final):
         tiendas_parciales = (df_resultados.groupby('tienda_id')['estado'].apply(lambda x: ((x == 'Parcialmente cargada').any() and (x != 'Completa').any()))).sum()
         tiendas_no_cargadas = (df_resultados.groupby('tienda_id')['estado'].apply(lambda x: (x == 'No cargada').all())).sum()
         
+        carga_maxima = df_resultados['carga_maxima_aplicada'].iloc[0] if len(df_resultados) > 0 else 0
+        
         resumen = pd.DataFrame({
             'Métrica': [
                 'Total unidades a despachar',
@@ -244,7 +239,8 @@ def generar_reporte_descargable(df_resultados, df_bodega, stock_bodega_final):
                 'Tiendas no cargadas',
                 'Stock bodega inicial',
                 'Stock bodega final',
-                'Stock bodega usado'
+                'Stock bodega usado',
+                'Máximo por SKU/Tienda (aplicado)'
             ],
             'Valor': [
                 total_unidades,
@@ -254,7 +250,8 @@ def generar_reporte_descargable(df_resultados, df_bodega, stock_bodega_final):
                 tiendas_no_cargadas,
                 df_bodega['stock_bodega'].sum(),
                 sum(stock_bodega_final.values()),
-                df_bodega['stock_bodega'].sum() - sum(stock_bodega_final.values())
+                df_bodega['stock_bodega'].sum() - sum(stock_bodega_final.values()),
+                carga_maxima
             ]
         })
         resumen.to_excel(writer, sheet_name='Resumen', index=False)
@@ -322,8 +319,8 @@ def generar_reporte_descargable(df_resultados, df_bodega, stock_bodega_final):
 
 # ==================== INTERFAZ PRINCIPAL ====================
 
-st.markdown('<div class="main-header">📦 Sugerido Automático v2</div>', unsafe_allow_html=True)
-st.markdown("**Repone automáticamente tu inventario respetando PRIORIDAD de tiendas**")
+st.markdown('<div class="main-header">📦 Sugerido Automático v2.2</div>', unsafe_allow_html=True)
+st.markdown("**Repone automáticamente tu inventario respetando PRIORIDAD de tiendas y MÁXIMO de carga**")
 st.divider()
 
 # Sidebar con pasos
@@ -393,7 +390,7 @@ elif "2️⃣" in step:
             
             with col1:
                 st.markdown("**Stock Tiendas:**")
-                st.dataframe(df_tiendas, use_container_width=True)
+                st.dataframe(df_tiendas.head(10), use_container_width=True)
             
             with col2:
                 st.markdown("**Stock Bodega:**")
@@ -414,7 +411,7 @@ elif "3️⃣" in step:
         Ajusta los parámetros de reposición. Estos determinan cuánto stock debe tener cada tienda.
         """)
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             carga_minima = st.number_input(
@@ -436,9 +433,43 @@ elif "3️⃣" in step:
             )
             st.markdown('<div class="metric-box"><strong>Ejemplo:</strong> Nuevo producto se carga con 8 unidades</div>', unsafe_allow_html=True)
         
+        with col3:
+            carga_maxima = st.number_input(
+                "📊 Máximo por SKU/Tienda",
+                min_value=5,
+                max_value=100,
+                value=20,
+                help="Máximo de unidades que puede recibir una tienda de un SKU"
+            )
+            st.markdown('<div class="metric-box"><strong>Ejemplo:</strong> Máximo 20 unidades por SKU en una tienda</div>', unsafe_allow_html=True)
+        
+        st.divider()
+        
+        # Tabla de restricciones
+        st.markdown("**Restricciones Aplicadas:**")
+        restricciones = pd.DataFrame({
+            'Parámetro': ['Carga Mínima', 'Carga Inicial', 'Máximo por SKU/Tienda', 'Límite Bodega'],
+            'Valor': [f'{carga_minima} unidades', f'{carga_inicial} unidades', f'{carga_maxima} unidades', 'Stock disponible'],
+            'Descripción': [
+                'Mínimo para reposición',
+                'Fijo para productos nuevos',
+                'No puede exceder este máximo',
+                'No puede superar bodega'
+            ]
+        })
+        st.dataframe(restricciones, use_container_width=True)
+        
+        # Validación de parámetros
+        if carga_inicial > carga_maxima:
+            st.warning(f"⚠️ Carga inicial ({carga_inicial}) > Máximo ({carga_maxima}). Se limitará a {carga_maxima}.")
+        
+        if carga_minima > carga_maxima:
+            st.warning(f"⚠️ Carga mínima ({carga_minima}) > Máximo ({carga_maxima}). Se limitará a {carga_maxima}.")
+        
         # Guardar parámetros
         st.session_state['carga_minima'] = carga_minima
         st.session_state['carga_inicial'] = carga_inicial
+        st.session_state['carga_maxima'] = carga_maxima
         
         st.success("✅ Parámetros configurados")
 
@@ -449,12 +480,13 @@ elif "4️⃣" in step:
     if 'df_tiendas' not in st.session_state or 'carga_minima' not in st.session_state:
         st.warning("⚠️ Completa los pasos anteriores primero (cargar datos y parámetros)")
     else:
-        # Calcular sugerido con prioridad
+        # Calcular sugerido con prioridad y máximo
         df_resultados, resumen_tiendas, stock_bodega_final = calcular_sugerido_con_prioridad(
             st.session_state['df_tiendas'],
             st.session_state['df_bodega'],
             st.session_state['carga_minima'],
-            st.session_state['carga_inicial']
+            st.session_state['carga_inicial'],
+            st.session_state['carga_maxima']
         )
         
         st.session_state['df_resultados'] = df_resultados
@@ -490,6 +522,16 @@ elif "4️⃣" in step:
             st.markdown(f'<div class="warning-box"><strong>🟡 Carga parcial:</strong> {tiendas_parciales} tienda(s) cargada(s) parcialmente</div>', unsafe_allow_html=True)
         else:
             st.markdown('<div class="success-box"><strong>🟢 Éxito:</strong> ✅ Todas las tiendas cargadas correctamente</div>', unsafe_allow_html=True)
+        
+        # Mostrar parámetros aplicados
+        st.markdown("**Parámetros Aplicados:**")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.info(f"🏪 **Carga Mínima:** {st.session_state['carga_minima']} unidades")
+        with col2:
+            st.info(f"🆕 **Carga Inicial:** {st.session_state['carga_inicial']} unidades")
+        with col3:
+            st.info(f"📊 **Máximo:** {st.session_state['carga_maxima']} unidades")
         
         st.divider()
         
@@ -579,7 +621,7 @@ elif "4️⃣" in step:
                     color = "🟡"
                 else:
                     color = "❌"
-                st.markdown(f"{color} **Orden {row['Orden de Carga']}:** {row['Tienda']} (Prioridad {row['Prioridad']}) - {row['SKU']} - {row['Cantidad']} unidades")
+                st.markdown(f"{color} **Orden {row['Orden de Carga']}:** {row['Tienda']} (Prio {row['Prioridad']}) - {row['SKU']} - {row['Cantidad']} unidades")
 
 # PASO 5: Descargar Reporte
 elif "5️⃣" in step:
@@ -604,12 +646,12 @@ elif "5️⃣" in step:
             use_container_width=True
         )
         
-        st.markdown('<div class="success-box"><strong>✅ El reporte incluye:</strong><br>• Resumen ejecutivo<br>• Detalle por tienda (en orden de prioridad)<br>• Carga por prioridad<br>• Impacto en bodega<br>• Antes vs Después</div>', unsafe_allow_html=True)
+        st.markdown('<div class="success-box"><strong>✅ El reporte incluye:</strong><br>• Resumen ejecutivo<br>• Detalle por tienda<br>• Carga por prioridad<br>• Impacto en bodega<br>• Antes vs Después</div>', unsafe_allow_html=True)
 
 # Footer
 st.divider()
 st.markdown("""
 <div style='text-align: center; color: #666; margin-top: 20px;'>
-    <small>v2.1 | Sugerido Automático | Sistema de Reposición por Prioridad</small>
+    <small>v2.2 | Sugerido Automático | Sistema de Reposición por Prioridad con Máximo de Carga</small>
 </div>
 """, unsafe_allow_html=True)
